@@ -5,7 +5,9 @@ use warnings;
 
 $| = 1;
 
-my $VERSION = 0.004;
+my $VERSION = 0.005;
+
+use RapidApp::Util ':all';
 
 use Path::Class qw(file dir);
 use IPC::Run qw( start pump finish timeout );
@@ -30,10 +32,11 @@ print "All console output is now also being written to '$log_fn' ... \n\n";
 &_run_cmd('docker pull ljishen/sysbench');
 &_run_cmd('docker pull polinux/bonnie');
 
-
-
-
-
+my @limit_jobs = @ARGV;
+my $lim_jobs = undef;
+if(scalar(@limit_jobs) > 0) {
+  $lim_jobs = { map {$_=>1} @limit_jobs };
+}
 
 my @benchmark_jobs = (
   {
@@ -43,13 +46,15 @@ my @benchmark_jobs = (
     cmds => [
       'hdparm -Tt /dev/disk/by-label/SITE'
     ],
-    disable => 0
+    disable => 0,
+    runnable_check => sub { -e '/dev/disk/by-label/SITE' }
   },
   {
     name     => 'bonnie++-simple-docker',
     category => 'io',
-    desc     => 'Standard bonnie++ command using /root/temp/bonnie-tmp',
+    desc     => 'Standard bonnie++ command via docker using /root/temp/bonnie-tmp',
     cmds => [
+      'rm -rf /root/temp/bonnie-tmp',
       'mkdir -p /root/temp/bonnie-tmp',
       'docker run -i --rm \
           -v /root/temp/bonnie-tmp:/workdir \
@@ -57,7 +62,21 @@ my @benchmark_jobs = (
           bonnie++ -d /workdir -u 0:0',
       'rm -rf /root/temp/bonnie-tmp'
     ],
-    disable => 0
+    disable => 0,
+    runnable_check => sub { ! &_has_system_bonnie }
+  },
+  {
+    name     => 'bonnie++-simple',
+    category => 'io',
+    desc     => 'Standard bonnie++ command using /root/temp/bonnie-tmp',
+    cmds => [
+      'rm -rf /root/temp/bonnie-tmp',
+      'mkdir -p /root/temp/bonnie-tmp',
+      'bonnie++ -d /root/temp/bonnie-tmp -u 0:0',
+      'rm -rf /root/temp/bonnie-tmp'
+    ],
+    disable => 0,
+    runnable_check => sub { &_has_system_bonnie }
   },
   [
     'sysbench-fileio-rndrw-01',
@@ -172,10 +191,20 @@ sub _run_bench {
   my $cfg = ((ref($name)||'') eq 'HASH')
     ? $name
     : { name => $name, desc => $desc, cmds => $cmds }; 
+    
+  if($lim_jobs) {
+    return unless ($lim_jobs->{$cfg->{name}} || $lim_jobs->{$cfg->{category}||''});
+  }
   
   if($cfg->{disabled}) {
     &_log_print("== Skipping benchmark '$cfg->{name}' marked 'disabled' ==\n");
     return;
+  }
+  if (my $cref = $cfg->{runnable_check}) {
+    unless ($cref->($cfg)) {
+      &_log_print("== Skipping benchmark '$cfg->{name}' because it's 'runnable_check' failed ==\n");
+      return;
+    }
   }
   
   my $t0 = [gettimeofday];
@@ -183,7 +212,7 @@ sub _run_bench {
   &_log_print("== Running benchmark '$cfg->{name}' at " . &_cur_ts . "==\n");
   &_log_print("== Descritpion: $cfg->{desc} ==\n");
   
-  &_run_cmd($_) for (@$cmds);
+  &_run_cmd($_) for (@{$cfg->{cmds}});
   
   my $elapsed = sprintf('%.3f',tv_interval($t0)).'s'; 
   
@@ -192,6 +221,12 @@ sub _run_bench {
 
 }
 
+
+sub _has_system_bonnie {
+  qx|which bonnie++|;
+  my $exit = $?>>8;
+  ! $exit
+}
 
 
 sub _cur_ts {

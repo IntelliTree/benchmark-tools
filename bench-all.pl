@@ -5,7 +5,7 @@ use warnings;
 
 $| = 1;
 
-my $VERSION = 0.002;
+my $VERSION = 0.003;
 
 use Path::Class qw(file dir);
 use IPC::Run qw( start pump finish timeout );
@@ -31,26 +31,40 @@ my $lFH = file($log)->open('w') or die "Couldn't open $log for write/append";
 &_run_cmd('docker pull polinux/bonnie');
 
 
-&_run_bench(
-  'hdparm on SITE',
-  'hdparm on whatever block device is SBL\'s SITE',
-  [
-    'hdparm -Tt /dev/disk/by-label/SITE'
-  ]
+
+
+
+
+my @benchmark_jobs = (
+  {
+    name     => 'hdparm on SITE',
+    category => 'io',
+    desc     => 'hdparm on whatever block device is SBL\'s SITE',
+    cmds => [
+      'hdparm -Tt /dev/disk/by-label/SITE'
+    ],
+    disable => 0
+  },
+  {
+    name     => 'bonnie++ using docker',
+    category => 'io',
+    desc     => 'Standard bonnie++ command using /root/temp/bonnie-tmp',
+    cmds => [
+      'mkdir -p /root/temp/bonnie-tmp',
+      'docker run -i --rm \
+          -v /root/temp/bonnie-tmp:/workdir \
+          polinux/bonnie \
+          bonnie++ -d /workdir -u 0:0',
+      'rm -rf /root/temp/bonnie-tmp'
+    ],
+    disable => 0
+  },
+  
 );
 
-&_run_bench(
-  'bonnie++ using docker',
-  'Standard bonnie++ command using /root/temp/bonnie-tmp',
-  [
-    'mkdir -p /root/temp/bonnie-tmp',
-    'docker run -i --rm \
-        -v /root/temp/bonnie-tmp:/workdir \
-        polinux/bonnie \
-        bonnie++ -d /workdir -u 0:0',
-    'rm -rf /root/temp/bonnie-tmp'
-  ]
-);
+
+&_run_bench($_) for (@benchmark_jobs);
+
 
 
 &_run_bench(
@@ -161,16 +175,25 @@ exit;
 sub _run_bench {
   my ($name, $desc, $cmds) = @_;
   
+  my $cfg = (ref($name)||'' eq 'HASH')
+    ? $name
+    : { name => $name, desc => $desc, cmds => $cmds }; 
+  
+  if($cfg->{disabled}) {
+    &_log_print("== Skipping benchmark '$cfg->{name}' marked 'disabled' ==\n");
+    return;
+  }
+  
   my $t0 = [gettimeofday];
   
-  &_log_print("== Running benchmark '$name' at " . &_cur_ts . "==\n");
-  &_log_print("== Descritpion: $desc ==\n");
+  &_log_print("== Running benchmark '$cfg->{name}' at " . &_cur_ts . "==\n");
+  &_log_print("== Descritpion: $cfg->{desc} ==\n");
   
   &_run_cmd($_) for (@$cmds);
   
   my $elapsed = sprintf('%.3f',tv_interval($t0)).'s'; 
   
-  &_log_print("== Benchmark '$name' ran for $elapsed ==\n============================\n\n");
+  &_log_print("== Benchmark '$cfg->{name}' ran for $elapsed ==\n============================\n\n");
   
 
 }

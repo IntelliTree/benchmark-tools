@@ -5,6 +5,8 @@ use warnings;
 
 $| = 1;
 
+my $VERSION = 0.001;
+
 use Path::Class qw(file dir);
 use IPC::Run qw( start pump finish timeout );
 use DateTime;
@@ -17,7 +19,7 @@ my $DOCKER_IMAGE = 'severalnines/sysbench';
 my $log = $ARGV[0] or die "must supply log output file arg";
 my $lFH = file($log)->open('w') or die "Couldn't open $log for write/append";
 
-&_log_print("=== sysbench-all.pl starting at " . $dt->ymd('-') . ' ' . $dt->hms(':') . "===\n\n");
+&_log_print("=== bench-all.pl $VERSION starting at " . $dt->ymd('-') . ' ' . $dt->hms(':') . "===\n\n");
 
 my @cmds = (
 'mkdir -p /root/temp/sysbench',
